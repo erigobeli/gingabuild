@@ -1,0 +1,13 @@
+git
+git-core
+g++
+libpng12-dev
+libjpeg62-dev
+libx11-dev
+libxext-dev
+libxv-dev
+libssl-dev
+libfreetype6-dev
+libtool
+autoconf
+automake
