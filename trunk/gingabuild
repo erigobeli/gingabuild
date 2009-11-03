@@ -1,0 +1,659 @@
+#!/bin/bash
+#
+# gingabuild
+#
+# @file     ${file_name}
+# 
+# @version  $Revision$
+#           $LastChangedDate$
+#           $LastChangedBy$
+#           $HeadURL$
+#
+# @changes
+#
+# ${dateiso} ${user}
+# -Initial structure of the progam and help messages.
+#
+
+
+#---------| VARIÁVEIS DE AMBIENTE |----------
+
+### DIRECTORIES
+
+WORKDIR=$(pwd)
+DOWNLOADDIR="$WORKDIR/download"
+
+### PACKGES URL
+
+# ginga
+url_xinelib="http://prdownloads.sourceforge.net/xine/xine-lib-1.1.16.2.tar.bz2"
+url_directfb="http://www.directfb.org/downloads/Core/DirectFB-1.4/DirectFB-1.4.0.tar.gz"
+url_dfbexamples="http://www.directfb.org/downloads/Extras/DirectFB-examples-1.2.0.tar.gz"
+url_fusionsound="http://www.directfb.org/downloads/Core/FusionSound/FusionSound-1.1.1.tar.gz"
+url_dfbextra="http://www.directfb.org/downloads/Extras/DirectFB-extra-1.2.0-rc1.tar.gz"
+
+# openginga
+url_jlibcpp="http://prdownloads.sourceforge.net/jlibcpp/jlibcpp-0.4.tar.gz"
+url_openginga="http://www.lavid.ufpb.br/openginga/openginga-beta-2-dev-src-20090902.tar.bz2"
+
+
+### OPENGINGA
+
+# env.sh
+export OPENGINGA_HOME="$DOWNLOADDIR/openginga-beta"
+export JAVA_HOME=/opt/j2sdk1.4.2_19
+export BASIS_HOME=$OPENGINGA_HOME/gingaj-beta
+export CC_HOME=$OPENGINGA_HOME/gingacc-beta
+export PATH=$JAVA_HOME/bin:$PATH
+export OPENGINGA_LIBS=/usr/local/lib/openginga
+mkdir -p $OPENGINGA_LIBS
+
+# Compile.sh
+export BASIS_CLASS="$BASIS_HOME/build/linux-x86-suse/basis_classes"
+export BASIS_BTCLASS="$BASIS_HOME/build/linux-x86-suse/btclasses"
+export GINGA_HOME="$BASIS_HOME/src/share/basis/classes/common"
+export DEFAULT_BOOTCLASSPATH="$BASIS_BTCLASS:$BASIS_CLASS"
+export DEFAULT_CLASSPATH="$BASIS_HOME:$BASIS_HOME/lib/:$BASIS_HOME/lib/jmf:$BASIS_HOME/lib/javatv/src:$BASIS_CLASS:$BASIS_BTCLASS:$BASIS_HOME/src/share/basis/classes/common:$BASIS_HOME/lib/javatv.jar:$BASIS_HOME/lib/kxml/src/:$BASIS_HOME/lib/kxml/lib/xmlpull_1.13/src:$BASIS_HOME/src/share/foundation/classes:$BASIS_HOME/src/share/classes"
+
+### GINGA-NCL
+export LD_LIBRARY_PATH=/usr/local/lib/ginga:/usr/local/lib/ginga/adapters:/usr/local/lib/ginga/cm:/usr/local/lib/ginga/converters:/usr/local/lib/ginga/ic:/usr/local/lib/ginga/iocontents:/usr/local/lib/ginga/players:/usr/local/lib:/usr/lib:/lib
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+
+### ININICIALIZAÇÂO
+
+JAVA=0
+
+# Compilação
+AUTOGEN=0
+CONFIGURE=0
+MAKE=0
+
+#---------| ROTINAS |----------
+
+### Show help messages
+show_help()
+{
+	echo ""
+	echo "Usage:  $0 [OPTION]"
+	echo ""
+	echo "Information:"
+	echo "  -h, --help		show this help message"
+	echo "  -V, --version		show version of the program"
+	echo ""
+	echo "Project:"
+	echo "  -J, --java		configure to Openginga project"
+	echo "  -N, --ncl		configure to Ginga-Ncl project"
+	echo ""
+}
+
+### Show modules messages
+msgModules()
+{
+	echo ""
+	echo -e "\033[01;32m------------| $1 |--------------\033[0m"
+	echo ""
+	sleep 2
+}
+
+### Show compilation messages
+msg()
+{
+	echo -e "\033[01;32m$1\033[0m"
+	sleep 2
+}
+
+### Check error
+checkError()
+{
+	if test "$?" != "0"
+	then
+		echo -e "\033[01;31mError !\033[0m"
+		exit 1
+	fi
+}
+
+check()
+{
+	# Check if dependency is installed on system 
+	DPKG=$(dpkg -l | grep "^ii  $1 ")
+
+	# If string length is 0 , dependency is not installed
+	if [ -z "$DPKG" ]
+	then
+		return 0 # Dependency not found
+	else
+		return 1 # Dependency OK
+	fi
+}
+
+getNames()
+{
+	ARCHIVE_NAME=`echo $1 | sed 's,.*/,,;'`
+        BASENAME=`echo $ARCHIVE_NAME | sed 's,\.zip$,,;s,\.tar\.gz$,,;s,\.tar\.bz2$,,;s,\.tgz,,;'`
+}
+
+
+### Check dependences and install
+check_dependency()
+{
+	echo ""
+	echo "Checking dependency tree ..."
+	echo ""
+	for dependency in `cat configs/debianlenny_"$1".deps`
+	do
+		check "$dependency"
+
+		# if return of check is ! 1, the dependency is not intalled
+		if [ "$?" -ne 1 ]
+		then
+                        depNotFound="$depNotFound $dependency"
+			RESULT=NO
+		else
+			RESULT=YES
+                fi
+		
+
+		printf "%-35s [%s]\n" $dependency $RESULT
+        done
+
+        if [ "$RESULT" = NO ]
+        then
+		echo ""
+                echo "The following packages were automatically installed:"
+                echo "$depNotFound"
+                echo " "
+                echo -n "Do you want to continue [Y/n]? "
+                read RESULT
+		
+		if [ "$RESULT" = Y ]
+		then
+			apt-get --assume-yes install "$depNotFound"	
+
+		else [ "$RESULT" = n ]
+			exit 1
+		fi	
+        fi
+	echo ""
+
+
+}
+
+getUnpack()
+{
+	# Checa se conhece a extensão
+	case $1 in
+		*.zip |*.gz|*.bz2|*.tgz) ;;
+		*) 
+			echo "Unknown suffix on url $1"
+			exit 1 
+			;;
+	esac
+
+	# Check if file exist
+	if test -f "$DOWNLOADDIR/$ARCHIVE_NAME"
+	then
+		echo "File $ARCHIVE_NAME exist ! "
+		echo ""
+	else
+		echo "Downloading $BASENAME ..."
+		echo ""
+		wget -P $DOWNLOADDIR -c $1
+	fi
+	
+	# Unpack
+	if test -d "$DOWNLOADDIR/$BASENAME"
+	then
+		echo "Arquivo $ARCHIVE_NAME ja descompactado."
+		echo ""
+	else
+		case $ARCHIVE_NAME in
+
+			*.gz | *.tgz | *.bz2)
+				echo "Descompactando $ARCHIVE_NAME"
+				tar -xf $DOWNLOADDIR/$ARCHIVE_NAME -C $DOWNLOADDIR 
+				;;
+			*.zip)
+				echo "Descompactando $ARCHIVE_NAME"
+				unzip  $DOWNLOADDIR/$ARCHIVE_NAME
+				;;
+			*)
+				echo "Unrecognized suffix for tarball $ARCHIVE_NAME"
+				exit 1
+				;;
+		esac
+	fi
+}
+
+#---------| ROTINAS DE COMPILAÇÃO |----------
+
+autogen()
+{
+	msg "Runing autogen.sh"
+	pushd "$DOWNLOADDIR/$1"
+	./autogen.sh
+	checkError
+	popd
+}
+
+configure()
+{
+	msg "Configuring $1"
+	pushd "$DOWNLOADDIR/$1"
+	./configure
+	checkError
+	popd
+}
+
+makeAndInstall()
+{
+	msg "Compiling $1"
+	pushd "$DOWNLOADDIR/$1"
+	make
+	checkError
+	make install
+	checkError
+	popd
+}
+
+#---------| ROTINAS DOS MODULOS |----------
+
+build()
+{
+	getNames "$1"
+	msgModules "$BASENAME"
+	getUnpack "$1"
+
+	if [ $AUTOGEN -eq 1 ]
+	then
+		autogen "$BASENAME"
+	fi
+
+	if [ $CONFIGURE -eq 1 ]
+	then
+		configure "$BASENAME"
+	fi
+	
+	if [ $MAKE -eq 1 ]
+	then
+		makeAndInstall "$BASENAME"
+	fi
+}
+
+build_xinelib()
+{
+	AUTOGEN=0
+	CONFIGURE=1
+	MAKE=1
+	configure_options=""
+	build "$url_xinelib"
+}
+
+build_directfb()
+{
+	AUTOGEN=1
+	CONFIGURE=1
+	MAKE=1
+	configure_options="--enable-x11 --with-gfxdrivers=none"
+	build "$url_directfb"
+
+}
+
+build_dfbexamples()
+{
+	AUTOGEN=0
+	CONFIGURE=1
+	MAKE=1
+	configure_options=""
+	build "$url_dfbexamples"
+}
+
+build_fusionsound()
+{
+	AUTOGEN=1
+	CONFIGURE=1
+	MAKE=1
+	configure_options=""
+	build "$url_fusionsound"
+}
+
+build_dfbextra()
+{
+	AUTOGEN=1
+	CONFIGURE=1
+	MAKE=1
+	configure_options=""
+	build "$url_dfbextra"
+}
+
+# Especificos openginga
+build_jlibcpp()
+{
+	AUTOGEN=0
+	CONFIGURE=0
+	MAKE=1
+	build "$url_jlibcpp"
+}
+
+build_getOpenginga()
+{
+	getNames "$url_openginga"
+	msgModules "$BASENAME"
+	BASENAME="openginga-beta" # Necessário pois não descompacta com o mesmo nome
+	getUnpack "$url_openginga"
+}
+
+
+### módulos JAVA
+
+build_phoneme()
+{	
+	msgModules "Compiling PhoneMe"
+	cd "$BASIS_HOME/build/linux-x86-suse"
+	./make.sh 
+	checkError
+	cd -
+}
+
+build_ginga()
+{
+	msgModules "Compiling Ginga "
+	$JAVA_HOME/bin/javac -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH \
+	$BASIS_HOME/lib/flextv/application/*.java \
+	$BASIS_HOME/lib/flextv/classloader/*.java \
+	$BASIS_HOME/lib/flextv/config/*.java      \
+	$BASIS_HOME/lib/flextv/event/*.java       \
+	$BASIS_HOME/lib/flextv/media/*.java       \
+	$BASIS_HOME/lib/flextv/window/*.java      \
+	$BASIS_HOME/lib/com/sun/dtv/ui/helper/*.java
+	checkError
+}
+
+build_davic()
+{
+	msgModules "Compiling Davic"
+	$JAVA_HOME/bin/javac -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH \
+	$BASIS_HOME/lib/org/davic/media/*.java         \
+	$BASIS_HOME/lib/org/davic/mpeg/*.java          \
+	$BASIS_HOME/lib/org/davic/mpeg/dvb/*.java      \
+	$BASIS_HOME/lib/org/davic/mpeg/sections/*.java \
+	$BASIS_HOME/lib/org/davic/net/*.java           \
+	$BASIS_HOME/lib/org/davic/net/ca/*.java        \
+	$BASIS_HOME/lib/org/davic/net/dvb/*.java       \
+	$BASIS_HOME/lib/org/davic/net/tuning/*.java    \
+	$BASIS_HOME/lib/org/davic/resources/*.java
+	checkError
+}
+
+build_havi()
+{
+	msgModules "Compiling Havi"
+	$JAVA_HOME/bin/javac -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH \
+	$BASIS_HOME/lib/org/havi/ui/*.java \
+	$BASIS_HOME/lib/org/havi/ui/event/*.java
+	checkError
+}
+
+build_dvb()
+{
+	msgModules "Compiling DVB"
+	$JAVA_HOME/bin/javac -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH:../DataProcessing/jni/src \
+	$BASIS_HOME/lib/org/dvb/application/*.java \
+	$BASIS_HOME/lib/org/dvb/event/*.java \
+	$BASIS_HOME/lib/org/dvb/io/persistent/*.java \
+	$BASIS_HOME/lib/org/dvb/net/*.java \
+	$BASIS_HOME/lib/org/dvb/net/ca/*.java \
+	$BASIS_HOME/lib/org/dvb/net/rc/*.java \
+	$BASIS_HOME/lib/org/dvb/net/tuning/*.java \
+	$BASIS_HOME/lib/org/dvb/si/*.java \
+	$BASIS_HOME/lib/org/dvb/user/*.java \
+	$BASIS_HOME/lib/org/dvb/ui/*.java \
+	$BASIS_HOME/lib/org/dvb/dsmcc/*.java
+	checkError
+}
+
+build_jbm()
+{
+	msgModules "Compiling JMF"
+	$JAVA_HOME/bin/javac -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH \
+	$BASIS_HOME/lib/jmf/javax/media/*.java \
+	$BASIS_HOME/lib/jmf/javax/media/protocol/*.java
+	checkError
+}
+
+build_lwuit()
+{
+	msgModules "Compiling LWUIT"
+	$JAVA_HOME/bin/javac -deprecation -bootclasspath $DEFAULT_BOOTCLASSPATH -classpath $DEFAULT_CLASSPATH:$BASIS_HOME/jni/lwuit \
+	$BASIS_HOME/lib/com/sun/dtv/service/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/test/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/security/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/control/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/language/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/audio/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/format/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/text/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/timeline/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/media/dripfeed/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/transport/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/ui/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/ui/event/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/layouts/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/geom/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/util/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/events/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/list/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/painter/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/plaf/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/animations/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/tuner/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/io/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/platform/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/filtering/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/application/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/net/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/smartcard/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/broadcast/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/broadcast/event/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/resources/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/locator/*.java \
+	$BASIS_HOME/lib/com/sun/dtv/lwuit/impl/*.java
+	checkError
+}
+
+build_jni()
+{
+	msgModules "Compiling jni"
+	cp -r $BASIS_HOME/build/linux-x86-suse/lib/ $CC_HOME/controller/tests/ ; checkError
+	cp -r $BASIS_HOME/build/linux-x86-suse/bin/libcvm.so $OPENGINGA_LIBS ; checkError
+	cp -r $BASIS_HOME/build/linux-x86-suse/lib/libawtjpeg.so $OPENGINGA_LIBS ; checkError
+	cp -r $BASIS_HOME/build/linux-x86-suse/lib/libdirectfbawt.so $OPENGINGA_LIBS ; checkError
+}
+
+build_gingacc()
+{
+	msgModules "Compiling gingacc-beta"
+	pushd "$CC_HOME"
+	make
+	make install
+	make tests
+	popd
+}
+
+# Compila tudo
+build_openginga()
+{
+	check_dependency "openginga" # Check dependences
+	build_xinelib
+	build_directfb
+	build_dfbexamples
+	build_fusionsound
+	build_dfbextra
+	build_jlibcpp
+	build_getOpenginga
+	build_phoneme
+	build_ginga
+	build_davic
+	build_havi
+	build_dvb
+	build_jbm
+	build_lwuit
+	build_jni
+	build_gingacc
+}
+
+
+
+#---------| RECEBE AS OPÇÕES |----------
+
+for ac_option do
+	case "$ac_option" in
+
+		-h | --help)
+			show_help
+			;;
+
+		-V | --version)
+			echo "Gingabuild version 0.0.1"
+			echo ""
+			;;
+	
+		*)
+			echo "Opção inválida: $1"
+			echo ""
+			exit 1
+			;;
+
+	esac
+done
+
+# -------------| GINGA DIALOG |---------------
+
+PROJECT=$( dialog --stdout \
+		--menu "Escolha o projeto :" \
+		0 0 0 \
+		1 "Ginga Java" \
+		2 "Ginga Ncl" )
+
+
+# -------------| OPENGINGA DIALOG |---------------
+
+if [ "$PROJECT" = 1 ]
+then
+	
+	ACTION=$( dialog --stdout \
+		--menu "OpenGinga Build" \
+		0 0 0 \
+		all "Compila o openginga completo" \
+		deps "Checa e instala as dependências" \
+		step "Compilar os modulos separadamente" )
+			
+
+	case $ACTION in
+		all)
+			clear
+			msgModules "Building all OpenGinga"
+			build_openginga
+		;;
+	
+		deps)
+			clear
+			msgModules "Checking OpenGinga dependence"
+			check_dependency "openginga" # Check dependences
+			exit
+		;;		
+
+		step)
+			ACTION=$( dialog --stdout \
+				--menu "Escolha o módulo:"\
+				0 0 0 \
+				xinelib "" \
+				directfb "" \
+				dfbexamples "" \
+				fusionsound "" \
+				dfbextra "" \
+				jlibcpp "" \
+				getOpenginga "" \
+				phoneme "" \
+				ginga "" \
+				davic "" \
+				havi "" \
+				dvb "" \
+				jbm "" \
+				lwuit "" \
+				jni "" \
+				gingacc "" )
+
+				clear
+				build_$ACTION # Função para compilar
+		;;
+	esac
+
+fi
+
+
+# -------------| GINGA-NCL DIALOG |---------------
+  
+if [ "$PROJECT" = 2 ]
+then
+	ACTION=$( dialog --stdout \
+		--menu "OpenGinga Build" \
+		0 0 0 \
+		all "Compila o Ginga-Ncl completo" \
+		deps "Checa e instala as dependências" \
+		step "Compilar os modulos separadamente" )
+
+		case $ACTION in
+			all)
+				clear
+				msgModules "Building all Ginga Ncl"
+				#build_gingancl
+			;;
+
+			deps)
+				clear
+				msgModules "Checking Ginga NCL dependence"
+				check_dependency "gingancl" # Check dependences
+				exit
+			;;
+			
+			step)
+				ACTION=$( dialog --stdout \
+					--menu "Escolha o módulo:"\
+					0 0 0 \
+					directfb "" \
+					dfbexamples "" \
+					codecs "" \
+					fusionsound "" \
+					xinelib "" \
+					dfbextra "" \
+					expat "" \
+					curl "" \
+					sfslite "" \
+					lua "" \
+					xerces "" \
+					telemidiautil "" \
+					telemidialinks "" \
+					gingacm "" \
+					gingasystem "" \
+					gingaic "" \
+					gingaum "" \
+					gingaplayer "" \
+					gingatuner "" \
+					gingatsparser "" \
+					gingadataprocessing "" \
+					gingacontextmanager "" \
+					ncl30 "" \
+					nclconverter "" \
+					gingancl "" \
+					gingalssm "" \
+					gingacpp "")					
+	
+					#clear
+					#build_$ACTION # Função para compilar
+			;;
+		esac
+
+fi	
