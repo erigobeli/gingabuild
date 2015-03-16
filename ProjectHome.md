@@ -1,0 +1,1 @@
+Programa em Shell Script para instalar e configurar o ambiente de desenvolvimento Ginga.
